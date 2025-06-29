@@ -107,3 +107,53 @@ jobs:
         export ASEPRITE=$PWD/build/bin/aseprite
         cd tests
         $XVFB bash run-tests.sh
+  release:
+    if: startsWith(github.ref, 'refs/tags/') # 只有 tag 推送时触发
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+      - uses: aseprite/get-ninja@main
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Install Skia
+        shell: bash
+        run: |
+          this_dir=$(cygpath "${{ github.workspace }}")
+          skia_url=$(source $this_dir/laf/misc/skia-url.sh | xargs)
+          skia_file=$(basename $skia_url)
+          curl --ssl-revoke-best-effort -L -o "$skia_file" "$skia_url"
+          unzip "$skia_file" -d skia
+      - name: Generating Makefiles
+        shell: bash
+        run: |
+          export laf_backend=skia
+          export enable_scripting=on
+          export enable_ccache=off
+          export skia_arch=x64
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DLAF_BACKEND=$laf_backend \
+            -DSKIA_DIR=$(realpath skia) \
+            -DSKIA_LIBRARY_DIR=$(realpath skia/out/Release-$skia_arch) \
+            -DENABLE_SCRIPTING=$enable_scripting \
+            -DENABLE_CCACHE=$enable_ccache \
+            -DENABLE_TESTS=OFF
+      - name: Compiling
+        shell: bash
+        run: |
+          cd build && ninja
+      - name: 打包 exe
+        shell: bash
+        run: |
+          mkdir output
+          cp build/bin/aseprite.exe output/
+          cd output
+          7z a aseprite-windows.zip aseprite.exe
+      - name: 发布 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: output/aseprite-windows.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
